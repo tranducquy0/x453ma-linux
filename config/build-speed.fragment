@@ -1,0 +1,119 @@
+#
+# build-speed.fragment — OPTIONAL, independent of x453ma.fragment
+#
+# Apply AFTER x453ma.fragment:
+#   scripts/kconfig/merge_config.sh -m -O build build/.config \
+#       config/x453ma.fragment config/build-speed.fragment
+#
+# ---------------------------------------------------------------------------
+# Scope: this file will NOT turn a multi-hour build into a fast one.
+#
+# Where build time actually goes on this class of machine (2 cores, 4 GiB,
+# SATA SSD, GCC 16):
+#
+#   ~25-30k object files, compiled from scratch on every clean build. That
+#   is effectively the entire cost, and it is dominated by sheer object count.
+#   Neither a config option nor a kernel patch changes that.
+#
+# Ranked by size:
+#   1. ccache on rebuilds         HUGE   (hours -> minutes after config tweaks)
+#   2. driver/module count        MODERATE (already trimmed by x453ma.fragment)
+#   3. -j tuning                  SMALL   (2 real cores, memory-bound link)
+#   4. objtool / ORC              SMALL   (~5-10% of build time)
+#   5. ftrace instrumentation      SMALL   (also works around a build error)
+#   6. the settings in this file  SMALL
+#
+# ccache is the largest win and is not listed here because it is a toolchain
+# setting rather than a kernel option; scripts/x453ma-kernel.sh enables it
+# automatically when installed. See README section 8.
+# ---------------------------------------------------------------------------
+#
+
+# 1. ftrace. This one is worth doing for a reason beyond speed.
+#
+#    It FIXES A BUILD FAILURE. On this tree, x86_64_defconfig yields
+#    CONFIG_FTRACE=y with CONFIG_FUNCTION_TRACER unset, and the build dies
+#    in `make prepare` with:
+#        arch/x86/include/asm/ftrace.h:9: error: #error Compiler does not
+#        support fentry?
+#    because Makefile only defines CC_USING_FENTRY when its
+#    `cc-option-yn -mfentry` probe succeeds. Whether that probe failure is
+#    pre-existing or specific to this config was not established.
+#
+#    Turning ftrace off sidesteps it entirely and also removes the
+#    instrumentation and the kprobe/ftrace plumbing from the build. Nothing in
+#    a desktop userspace needs function tracing, so this costs no functionality.
+#
+#    Note this does NOT touch the Spectre/MDS/IBPB CPU mitigations, which are
+#    a separate mechanism (CONFIG_MITIGATION_*) and are left untouched on
+#    purpose. Do not confuse the two.
+# CONFIG_FTRACE is not set
+# CONFIG_DYNAMIC_FTRACE is not set
+# CONFIG_FUNCTION_TRACER is not set
+# CONFIG_KPROBE_EVENTS is not set
+# CONFIG_KPROBE_SAMPLE is not set
+
+# 2. Skip objtool on every object file.
+#
+#    CONFIG_UNWINDER_ORC runs objtool over essentially every .o to insert ORC
+#    unwinder records. That is a real, measurable slice of the build.
+#    CONFIG_UNWINDER_FRAME_POINTER replaces it with a plain frame-pointer
+#    walk: no objtool pass at all.
+#
+#    TRADE-OFF: frame-pointer unwinding costs a little runtime performance
+#    (crash backtraces and perf look slightly different, ~1-3% on some
+#    workloads). ORC is better at runtime; this file is about build time.
+#    If you would rather keep ORC, delete this stanza — it is the only part
+#    here that costs you anything at run time.
+# CONFIG_UNWINDER_ORC is not set
+# CONFIG_UNWINDER_FRAME_POINTER=y
+
+# 3. Do not keep data symbols for module debugging.
+#
+#    Smaller kallsyms => a smaller vmlinux and a cheaper link.
+#    Costs you: module *data* symbols in /proc/kallsyms, so some crash
+#    backtraces through modules get less readable.
+# # CONFIG_KALLSYMS_ALL is not set
+
+# 4. Do not die on compiler warnings.
+#
+#    CONFIG_WERROR=y is in defconfig. GCC 16 is newer than this tree and will
+#    eventually emit a warning this kernel treats as an error, which turns a
+#    cosmetic warning into a failed build. You have already hit one such
+#    toolchain interaction (fentry, above). A warning is not a build failure.
+CONFIG_WERROR=n
+
+# 5. Skip deflate work at install time (not build time).
+# CONFIG_MODULE_COMPRESS_NONE=y
+
+# ---------------------------------------------------------------------------
+# Explicitly NOT changed here, and why — these are common "optimisations" that
+# would be mistakes on this machine:
+#
+#   LTO / CONFIG_LTO_THIN / CONFIG_LTO_FULL
+#       This is the single most counterproductive thing you can do here. LTO
+#       is the usual first answer to "make the kernel smaller", but it makes
+#       the BUILD dramatically slower, and its memory appetite during the link
+#       stage will thrash a 4 GiB machine with ~1.9 GiB of swap. It would
+#       make your 4-hour problem into an 8-hour problem. Stay on LTO_NONE.
+#       (Also: you have no clang installed, so the good fast-LTO path — clang
+#       + ThinLTO — is not available to you anyway. GCC LTO is the slow one.)
+#
+#   CONFIG_CC_OPTIMIZE_FOR_SIZE
+#       "-Os" is not reliably faster to compile than -O2 on modern GCC, and it
+#       makes the CPU-bound parts of your desktop slower. That is a bad trade
+#       for a laptop.
+#
+#   make localmodconfig
+#       Produces a config that depends on what happened to be loaded today.
+#       You will lose the SD card reader, the fallback NIC, and anything only
+#       needed on a cold path, and it will differ every time you run it.
+#       Already rejected in the main README; do not reintroduce it here.
+#
+#   CONFIG_CC_VERSION_CHECK / custom gcc versions
+#       Cosmetic speed claims in old kernel-build guides; no measurable effect.
+#
+#   Stripping -Wall / -Werror everywhere or disabling objtool globally
+#       Hides real bugs. Disabling warnings on a tree you are rebasing onto
+#       new compilers is how you end up debugging a silently broken kernel.
+# ---------------------------------------------------------------------------

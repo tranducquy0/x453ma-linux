@@ -1,0 +1,12 @@
+# Out-of-tree build directory. Created by scripts/x453ma-kernel.sh; can be many
+# gigabytes and is fully reproducible from the fragments, so never commit it.
+/build/
+
+# merge_config.sh creates these in the *current* directory when it runs.
+.tmp.config.*
+
+# Editor and OS cruft
+*~
+*.swp
+*.swo
+.DS_Store

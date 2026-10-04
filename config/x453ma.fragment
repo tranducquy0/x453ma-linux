@@ -1,0 +1,528 @@
+#
+# x453ma.fragment — ASUS X453MA
+#
+# Platform : Intel Braswell SoC (ACPI LPIT "VLV2", PCI 8086:0f00/0f1c/0f23/0f35)
+# CPU      : Celeron N2840 @ 2.16 GHz, family 6 model 0x37 stepping 8,
+#            Silvermont microarchitecture, microcode 0x838
+# GPU      : Intel HD Graphics 8086:0f31 — i915 reports "valleyview", Gen7
+# Note     : Braswell is the SoC name, Silvermont the core microarchitecture.
+#            They are not alternatives; the N2840 is a Braswell part built from
+#            Silvermont cores. (Bay Trail is also Silvermont; Gemini Lake would
+#            be Goldmont and would show different PCI IDs — this is not that.)
+#
+# Baseline:  x86_64_defconfig
+# Apply with (this is what scripts/x453ma-kernel.sh config does):
+#     merge_config.sh -m -O <builddir> <builddir>/.config \
+#         config/x453ma.fragment [config/build-speed.fragment ...] \
+#     && make O=<builddir> olddefconfig
+# To check it still resolves:  scripts/verify-config.sh
+#
+# DESIGN RULES (read README.md before changing anything here):
+#   1. DELTAS ONLY. Anything not mentioned is left to upstream x86_64_defconfig,
+#      so a kernel version bump cannot silently break this file.
+#   2. Every enabled line is justified by hardware actually observed on the
+#      machine (lspci -nnk, /sys/bus/acpi/devices/*, journalctl -b -k).
+#   3. Nothing here assumes BIOS-only boot. UEFI and BIOS/CSM both stay alive.
+#   4. Symbol names drift between kernel releases (RETPOLINE ->
+#      MITIGATION_RETPOLINE, BTRFS_FS_XATTR and X86_5LEVEL no longer exist in
+#      7.2, WLAN_VENDOR_ATH9K is WLAN_VENDOR_ATH, ...). Every line below was
+#      verified against this tree; re-verify after a big version jump with
+#      scripts/verify-config.sh.
+#
+
+# =====================================================================
+# 1. Identity / reproducibility
+# =====================================================================
+CONFIG_LOCALVERSION="-x453ma"
+# CONFIG_LOCALVERSION_AUTO is not set
+
+# Keep the running config readable from /proc/config.gz. Invaluable when a
+# kernel behaves differently from the one you think is running.
+CONFIG_IKCONFIG=y
+CONFIG_IKCONFIG_PROC=y
+
+# =====================================================================
+# 2. Boot path: UEFI *and* BIOS/CSM
+#
+# Currently booted UEFI + systemd-boot; ESP is a GPT vfat partition
+# (/dev/sda1 mounted at /boot). Devuan is used via BIOS/CSM, so both paths are
+# kept. Nothing in this kernel writes NVRAM by itself (see section 13).
+# =====================================================================
+CONFIG_EFI=y
+CONFIG_EFI_STUB=y
+# Only needed if a BIOS/CSM bootloader chains an EFI payload (e.g. GRUB with an
+# EFI shim). Tiny; keeps both boot worlds open.
+CONFIG_EFI_MIXED=y
+CONFIG_EFI_PARTITION=y
+
+# ESP filesystem
+CONFIG_FAT_FS=y
+CONFIG_VFAT_FS=y
+CONFIG_MSDOS_FS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
+
+# initramfs: mkinitcpio may hand us gzip, zstd, lz4 or xz depending on
+# /etc/mkinitcpio.conf and the host's zstd default. Keep all of them.
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_RD_ZSTD=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_XZ=y
+
+# =====================================================================
+# 3. Graphics: i915 on "valleyview" (device ID 0f31, Gen7)
+#
+#   i915 0000:00:02.0: [drm] Found valleyview (device ID 0f31)
+#                  integrated display version 7.00
+#
+# Built-in, not modular: this is the only DRM driver on the board and it
+# provides the framebuffer console. Gen7 needs no GuC/HuC firmware, so no
+# firmware blob is involved at all.
+#
+# i915 selects ACPI_VIDEO, ACPI_WMI, IOSF_MBI, DRM_TTM, DRM_BUDDY and
+# INPUT by itself; those do not need to be listed here.
+# =====================================================================
+CONFIG_DRM_I915=y
+CONFIG_ACPI_VIDEO=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_BACKLIGHT_CLASS_DEVICE=y
+
+# A plain framebuffer console for when i915's fbdev emulation is not the
+# primary device. FB_EFI covers UEFI (EFI GOP), FB_VESA covers BIOS/CSM.
+# Together they are ~50 KB and they are the difference between seeing boot
+# messages and seeing a black screen on a machine with firmware this old.
+CONFIG_FB=y
+CONFIG_FB_CORE=y
+CONFIG_FB_EFI=y
+CONFIG_FB_VESA=y
+
+# =====================================================================
+# 4. Wi-Fi: ath9k on Atheros AR9485 (168c:0032)
+#
+#   02:00.0 Network controller: Qualcomm Atheros AR9485 [168c:0032]
+#
+# ath9k needs no firmware blob. The only wireless firmware this machine can
+# ever want is regulatory.db, which is a *userspace* file shipped by the
+# linux-firmware package (currently missing — see README).
+# =====================================================================
+CONFIG_ATH9K=y
+CONFIG_ATH9K_PCI=y
+CONFIG_ATH9K_HW=y
+CONFIG_ATH9K_COMMON=y
+CONFIG_WLAN_VENDOR_ATH=y
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
+# CONFIG_WIRELESS_EXT has no prompt (pure select target) - never set by hand.
+
+# =====================================================================
+# 5. Storage: AHCI SATA + USB mass storage + SD card reader
+#
+#   00:13.0 SATA controller: Atom E3800 Series SATA AHCI [8086:0f23]
+#   sda = PH6-CE120-L1 SSD, 112 GiB, non-rotational
+#   03:00.0 Realtek RTS5286 card reader [10ec:5286] -> rtsx_pci
+#
+# AHCI is built-in: it carries the root filesystem.
+# =====================================================================
+CONFIG_ATA=y
+CONFIG_SATA_AHCI=y
+CONFIG_ATA_ACPI=y
+CONFIG_BLK_DEV=y
+
+# USB storage: a USB stick and a USB DVD-RAM (sr0) are attached right now.
+CONFIG_USB_STORAGE=y
+CONFIG_USB_UAS=y
+CONFIG_CDROM=y
+
+# SD/mmc: the RTS5286 reader, plus the SDHC controller the DSDT still
+# describes as \_SB_.SDHA (kept modular — no card is in the slot).
+CONFIG_MMC=y
+CONFIG_MMC_BLOCK=y
+CONFIG_MISC_RTSX_PCI=y
+CONFIG_MMC_REALTEK_PCI=y
+CONFIG_MMC_SDHCI=m
+CONFIG_MMC_SDHCI_PCI=m
+
+# =====================================================================
+# 6. USB: xHCI only
+#
+#   00:14.0 USB controller: Atom/Celeron N2000 Series USB xHCI [8086:0f35]
+#
+# lspci lists exactly one USB controller. The Braswell xHCI enumerates the
+# USB 1.1/2.0 ports directly, which is why the webcam, the USB stick and the
+# DVD-RAM all log as "high-speed USB device ... using xhci_hcd".
+# =====================================================================
+CONFIG_USB=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_XHCI_PCI=y
+CONFIG_USB_HID=y
+CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
+
+# Webcam: USB2.0 VGA UVC WebCam [04f2:b483]. Note the MEDIA_USB_SUPPORT
+# parent — uvcvideo will not build without it even with USB_VIDEO_CLASS=y.
+CONFIG_MEDIA_SUPPORT=y
+# The "Media core support" menu in this tree is `visible if !MEDIA_SUPPORT_FILTER`,
+# and MEDIA_SUPPORT_FILTER defaults to y. With the filter on, VIDEO_DEV -- and
+# therefore USB_VIDEO_CLASS/uvcvideo -- is not present in the Kconfig database
+# at all, so setting it in a config file is silently ignored. Verified against
+# this tree. Turn the filter off, ask for cameras, then V4L2 and uvcvideo
+# become settable.
+# CONFIG_MEDIA_SUPPORT_FILTER is not set
+CONFIG_MEDIA_CAMERA_SUPPORT=y
+CONFIG_MEDIA_USB_SUPPORT=y
+CONFIG_VIDEO_DEV=y
+CONFIG_USB_VIDEO_CLASS=y
+CONFIG_UVC_COMMON=y
+CONFIG_MEDIA_SUBDRV_AUTOSELECT=n
+
+# usbserial_generic registers on this machine at boot (USB CD-ROM bridge).
+# USB_SERIAL is a menuconfig: the per-protocol entries below it are bools, so
+# they must be y/n, never m.
+CONFIG_USB_SERIAL=m
+CONFIG_USB_SERIAL_GENERIC=y
+CONFIG_USB_SERIAL_SIMPLE=m
+
+# =====================================================================
+# 7. Input, keyboard, touchpad, laptop platform
+#
+#   AT Translated Set 2 keyboard        (ATK3001 / PNP0303)
+#   FocalTechPS/2 FocalTech Touchpad    (PS/2, plain 2-button+middle)
+#   Asus WMI hotkeys + ATK4001 rfkill   (\_SB_.ASHS)
+#   8x ACPI hotkeys PNP0C0F, lid PNP0C0D, sleep PNP0C0E, battery PNP0C0A
+#
+# asus-wmi is the single most important driver on this laptop: the wireless
+# radio switch (ATK4001), the WMI/ATK hotkeys, and the fan (hwmon fan1_input
+# and pwm1 both come from it). The DSDT speaks the old ATK/DSTS interface and
+# asus-nb-wmi says so at boot:
+#     asus-nb-wmi asus-nb-wmi: Detected ATK, not ASUSWMI, use DSTS
+# Keep ACPI and the ACPI interpreter fully enabled — the fan and the
+# lid/wireless controls are all reached through ACPI methods.
+# =====================================================================
+CONFIG_INPUT=y
+CONFIG_HID=y
+CONFIG_HID_SUPPORT=y
+CONFIG_HID_MULTITOUCH=y
+CONFIG_I2C_HID=y
+
+CONFIG_SERIO_I8042=y
+CONFIG_MOUSE_PS2=y
+# Upstream's Kconfig text for this one is literally "Say Y here if you have a
+# FocalTech PS/2 TouchPad connected to your system". That is this machine.
+CONFIG_MOUSE_PS2_FOCALTECH=y
+CONFIG_INPUT_MOUSEDEV=m
+# sparse-keymap is pulled in as INPUT_SPARSEKMAP below; do not set it here.
+
+CONFIG_INPUT_SPARSEKMAP=y
+# GPIOLIB is off in x86_64_defconfig because nothing there selects it. Without
+# it the wireless-switch GPIO paths (rfkill_gpio, and various gpio consumers)
+# cannot build. Cheap; enable it explicitly.
+CONFIG_GPIOLIB=y
+CONFIG_GPIOLIB_LEGACY=y
+CONFIG_LEDS_CLASS=y
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_TRIGGERS=y
+CONFIG_RFKILL=y
+CONFIG_RFKILL_GPIO=y
+CONFIG_HOTPLUG_PCI=y
+CONFIG_ACPI_WMI=y
+CONFIG_ACPI_BATTERY=y
+CONFIG_ACPI_PLATFORM_PROFILE=y
+
+CONFIG_ASUS_WMI=y
+CONFIG_ASUS_NB_WMI=y
+CONFIG_ASUS_WIRELESS=y
+CONFIG_ASUS_ARMOURY=y
+
+CONFIG_RTC_CLASS=y
+CONFIG_RTC_DRV_CMOS=y
+
+# =====================================================================
+# 8. Sound: Intel HDA + Realtek ALC269
+#
+#   00:1b.0 Atom Z36xx/Z37xx Series High Definition Audio [8086:0f04]
+#   HDA Intel PCH Headphone, HDA Intel PCH HDMI/DP
+#
+# SND_HDA_CODEC_ALC269 lives under the SND_HDA_CODEC_REALTEK parent.
+# =====================================================================
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_HDA=y
+CONFIG_SND_HDA_INTEL=y
+CONFIG_SND_HDA_CODEC_REALTEK=y
+CONFIG_SND_HDA_CODEC_ALC269=y
+
+# =====================================================================
+# 9. Filesystems
+#
+#   root : btrfs (subvol=@, /dev/sda2)   <-- the actual root filesystem
+#   ESP  : vfat (/dev/sda1 -> /boot)
+#   requested : ext4
+#
+# ext4 stays enabled even though this install does not use it: the other
+# distributions on this machine and rescue media do, and it costs ~1 MB.
+# =====================================================================
+CONFIG_BTRFS_FS=y
+CONFIG_BTRFS_FS_POSIX_ACL=y
+CONFIG_EXT4_FS=y
+CONFIG_VFAT_FS=y
+CONFIG_FS_POSIX_ACL=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+CONFIG_OVERLAY_FS=y
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_FUSE_FS=m
+# Optical media: the USB DVD-RAM shows up as sr0.
+CONFIG_ISO9660_FS=y
+CONFIG_UDF_FS=m
+
+# =====================================================================
+# 10. Networking
+#
+#   03:00.2 Realtek RTL8402 Fast Ethernet [10ec:8136] -> r8169
+#   02:00.0 Atheros AR9485                              -> ath9k
+#
+# CONFIG_NET must be enabled: INTEL_SOC_DTS_THERMAL depends on it.
+# CONFIG_R8169 is not optional — there is a physical Ethernet port and it is
+# the fallback path for rescue media. Do NOT disable NET_VENDOR_REALTEK.
+# =====================================================================
+CONFIG_NET=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_INET=y
+CONFIG_IPV6=y
+CONFIG_NETDEVICES=y
+CONFIG_VETH=y
+CONFIG_BRIDGE=y
+CONFIG_VLAN_8021Q=y
+CONFIG_NETFILTER=y
+CONFIG_ETHERNET=y
+CONFIG_R8169=y
+
+# =====================================================================
+# 11. Thermal, power management, platform glue
+#
+#   acpitz (LNXTHERM), soc_dts0, soc_dts1 (SoC digital thermal sensors),
+#   coretemp (X86_PKG_TEMP_THERMAL), AC0 + BAT0 (ACPI battery)
+#
+# INTEL_SOC_DTS_THERMAL is not optional on this platform: i915 consumes the
+# SoC DTS for its GT temperature limits. INTEL_POWERCLAMP is the package
+# C-state residency workaround the Silvermont generation needs in order to
+# actually enter C-states. Suspend is s2idle only — see README, the DSDT
+# exposes no S3.
+# =====================================================================
+CONFIG_THERMAL=y
+CONFIG_THERMAL_HWMON=y
+CONFIG_THERMAL_NETLINK=y
+CONFIG_ACPI_THERMAL=y
+CONFIG_INTEL_SOC_DTS_IOSF_CORE=y
+CONFIG_INTEL_SOC_DTS_THERMAL=y
+CONFIG_INT340X_THERMAL=y
+CONFIG_X86_PKG_TEMP_THERMAL=y
+CONFIG_SENSORS_CORETEMP=y
+CONFIG_INTEL_POWERCLAMP=y
+CONFIG_HWMON=y
+
+CONFIG_PM=y
+CONFIG_PM_SLEEP=y
+CONFIG_ACPI_SLEEP=y
+CONFIG_CPU_IDLE=y
+CONFIG_CPU_IDLE_GOV_MENU=y
+CONFIG_INTEL_IDLE=y
+CONFIG_RAS=y
+
+# Braswell Whiskey Cove PMIC and the ACPI PMC. Neither is loaded by the
+# currently running kernel and nothing needs them today, so both stay modular.
+CONFIG_MFD_INTEL_PMC_BXT=m
+CONFIG_INTEL_SOC_PMIC_BXTWC=m
+CONFIG_PMIC_OPREGION=y
+# BXT_WC_PMIC_OPREGION is a bool, and it is pointless while
+# INTEL_SOC_PMIC_BXTWC=m. Enable it together with the PMIC driver if needed.
+# CONFIG_BXT_WC_PMIC_OPREGION is not set
+
+# LPSS PWM drives the fan curve; I2C for the ELan/Atmel/NXP touch controllers
+# the DSDT declares; SPI for the FPNT sensor and the on-board SPI NOR; i801
+# SMBus; the memory module's SPD EEPROM (i2c-9).
+CONFIG_I2C=y
+CONFIG_I2C_CHARDEV=y
+CONFIG_I2C_ALGOBIT=y
+CONFIG_I2C_I801=y
+CONFIG_SPI=y
+CONFIG_SPI_MEM=y
+# SPI_INTEL itself is prompt-less (selected by the two below). The PCI half
+# drives the Braswell SPI controller (8086:0f0e -> module spi_intel); the
+# platform half drives the ACPI-described spi_intel_platform.
+CONFIG_SPI_INTEL_PCI=y
+CONFIG_SPI_INTEL_PLATFORM=y
+CONFIG_PWM=y
+CONFIG_PWM_LPSS=y
+CONFIG_PWM_LPSS_PLATFORM=y
+CONFIG_EEPROM_AT24=m
+
+# =====================================================================
+# 12. Firmware loading
+#
+# ath9k and this Gen7 i915 load no blobs. CONFIG_FW_LOADER is kept anyway
+# because it is the mechanism anything else would use, and it is tiny.
+# =====================================================================
+CONFIG_FW_LOADER=y
+CONFIG_FW_LOADER_COMPRESS=y
+
+# =====================================================================
+# 13. Never let the kernel write UEFI variables
+#
+# EFI_VARS_PSTORE defaults to =y whenever PSTORE=y, and its only job is to
+# write a UEFI variable into NVRAM on kernel panic. Given this machine's
+# firmware/NVRAM history, switch the pstore path off entirely: with PSTORE=n,
+# EFI_VARS_PSTORE cannot even be built. See README "Firmware and NVRAM" for
+# the alternative that keeps crash dumps.
+# =====================================================================
+# CONFIG_PSTORE is not set
+# CONFIG_EFI_VARS_PSTORE is not set
+
+
+#######################################################################
+# 14. DISABLED DRIVER FAMILIES
+#
+# Each item is disabled because the hardware is provably absent (PCI
+# enumeration / ACPI namespace), or because the driver cannot function on this
+# board. README.md has the long-form justification.
+#
+# NOTE: do not disable a vendor *menu* (NET_VENDOR_REALTEK, WLAN_VENDOR_ATH,
+# ...) when a driver from that vendor is required — that was a real bug in an
+# earlier revision of this file, which silently removed R8169.
+#######################################################################
+
+# --- Other GPUs. Only Intel HD Graphics (0f31) is on the PCI bus. -------
+# CONFIG_DRM_AMDGPU is not set
+# CONFIG_DRM_RADEON is not set
+# CONFIG_DRM_NOUVEAU is not set
+# CONFIG_DRM_VIRTIO_GPU is not set
+# CONFIG_DRM_VBOXVIDEO is not set
+# CONFIG_DRM_BOCHS is not set
+# CONFIG_DRM_CIRRUS is not set
+# CONFIG_DRM_QXL is not set
+# CONFIG_DRM_SIS is not set
+# CONFIG_DRM_VIA is not set
+
+# --- Wireless radios other than Atheros AR9xxx -------------------------
+# CONFIG_WLAN_VENDOR_ADMTEK is not set
+# CONFIG_WLAN_VENDOR_ATMEL is not set
+# CONFIG_WLAN_VENDOR_BROADCOM is not set
+# CONFIG_WLAN_VENDOR_INTEL is not set
+# CONFIG_WLAN_VENDOR_INTERSIL is not set
+# CONFIG_WLAN_VENDOR_MARVELL is not set
+# CONFIG_WLAN_VENDOR_MEDIATEK is not set
+# CONFIG_WLAN_VENDOR_MICROCHIP is not set
+# CONFIG_WLAN_VENDOR_PURELIFI is not set
+# CONFIG_WLAN_VENDOR_QUANTENNA is not set
+# CONFIG_WLAN_VENDOR_RALINK is not set
+# CONFIG_WLAN_VENDOR_REALTEK is not set
+# CONFIG_WLAN_VENDOR_RSI is not set
+# CONFIG_WLAN_VENDOR_SILABS is not set
+# CONFIG_WLAN_VENDOR_ST is not set
+# CONFIG_WLAN_VENDOR_TI is not set
+# CONFIG_WLAN_VENDOR_ZYDAS is not set
+# CONFIG_ATH5K is not set
+# CONFIG_ATH5K_PCI is not set
+# CONFIG_ATH9K_HTC is not set          # USB Atheros, this board is PCI
+# CONFIG_CARL9170 is not set
+# CONFIG_MT7601U is not set
+# CONFIG_RT2X00 is not set
+# CONFIG_ZD1211RW is not set
+
+# --- ath9k debug builds. (Some of these are additionally gated by an
+#     ATH9K_DEBUG dependency and simply never appear in .config.) ---------
+# CONFIG_ATH9K_DEBUGFS is not set
+# CONFIG_ATH9K_COMMON_DEBUG is not set
+# CONFIG_ATH9K_DFS_DEBUGFS is not set
+# CONFIG_ATH9K_COMMON_SPECTRAL is not set
+# CONFIG_ATH9K_STATION_STATISTICS is not set
+# CONFIG_ATH9K_BTCOEX_SUPPORT is not set
+
+# --- USB host controllers other than xHCI ------------------------------
+# lspci lists only 8086:0f35; the Braswell xHCI runs the USB1/USB2 ports.
+# CONFIG_USB_EHCI_HCD is not set
+# CONFIG_USB_OHCI_HCD is not set
+# CONFIG_USB_UHCI_HCD is not set
+
+# --- PATA / legacy IDE controllers: none present ----------------------
+# CONFIG_ATA_PIIX is not set
+# CONFIG_ATA_GENERIC is not set
+
+# --- Intel MEI. See README "Why mei_txe is disabled": the device is at
+#     00:1a.0 but has no ACPI interrupt routing, so the driver cannot work on
+#     this board and nothing on this machine uses MEI anyway.
+# CONFIG_INTEL_MEI is not set
+
+# --- Virtualisation: 4 GiB of RAM, no hypervisor use case -------------
+# CONFIG_KVM is not set
+# CONFIG_HYPERV is not set
+# CONFIG_XEN is not set
+
+# --- Ethernet controllers other than the Realtek RTL8402 -------------
+# NOTE: NET_VENDOR_REALTEK must stay enabled — r8169 lives under it.
+# CONFIG_8139CP is not set
+# CONFIG_8139TOO is not set
+# CONFIG_NE2K_PCI is not set
+# CONFIG_VIA_RHINE is not set
+# CONFIG_NET_VENDOR_INTEL is not set
+# CONFIG_E1000 is not set
+# CONFIG_E1000E is not set
+# CONFIG_NET_VENDOR_BROADCOM is not set
+# CONFIG_BNX2 is not set
+# CONFIG_NET_VENDOR_MELLANOX is not set
+# CONFIG_NET_VENDOR_MARVELL is not set
+# CONFIG_NET_VENDOR_QLOGIC is not set
+# (no ETHERNET_VENDOR_MICROCHIP / ATA_OVERLAY / SCSI_ISCSI in this tree)
+
+# --- Fabric / SAN / cluster storage, absent hardware ------------------
+# CONFIG_INFINIBAND is not set
+# CONFIG_ISCSI_TCP is not set
+# CONFIG_MD is not set
+# CONFIG_CEPH_FS is not set
+# CONFIG_OCFS2_FS is not set
+# CONFIG_GFS2_FS is not set
+# CONFIG_NILFS2_FS is not set
+# CONFIG_UBIFS_FS is not set
+# CONFIG_EROFS_FS is not set
+# CONFIG_NFS_FS is not set
+# CONFIG_CIFS is not set
+
+# --- TV, radio, analogue capture ---------------------------------------
+# NOTE: these cannot actually be switched off while the webcam is enabled.
+# With MEDIA_SUPPORT_FILTER=n the media *category* symbols (analog TV, radio,
+# SDR, platform, test) become prompt-less and therefore default to y, and
+# MEDIA_TUNER is a prompt-less tristate that defaults to y. What you can still
+# control is whether the ~40 individual tuner drivers are auto-selected:
+#   CONFIG_MEDIA_SUBDRV_AUTOSELECT is not set   (36 tuner .ko files remain,
+#   never loaded; this saves 3 of them plus some ancillary media modules)
+# If you would rather drop the webcam entirely and reclaim all of this, delete
+# the MEDIA block in section 6 -- see README "Uncertainties".
+
+# --- Sound hardware that is not present --------------------------------
+# CONFIG_SND_USB_AUDIO is not set
+# CONFIG_SND_PCM_OSS is not set
+
+# --- Device / firmware debug outputs ----------------------------------
+# CONFIG_DEBUG_DRIVER is not set
+# CONFIG_I2C_DEBUG_CORE is not set
+# CONFIG_SPI_DEBUG is not set
+# CONFIG_REGULATOR_DEBUG is not set
+
+# =====================================================================
+# 15. Deliberately NOT touched
+#
+# Left at upstream defaults on purpose, because changing them trades
+# correctness or robustness for very little size:
+#   - PREEMPT / scheduler, HZ, RCU, NO_HZ   (latency, timer accuracy)
+#   - Spectre / MDS / IBPB mitigations      (security posture; do not
+#     weaken these for speed on a machine you actually use)
+#   - LSMs, audit, IMA, EVM                 (userspace policy)
+#   - generic netfilter / conntrack         (nftables, containers)
+#   - core MM / VFS / scheduler plumbing    (the goal is maintainability,
+#     not a microkernel)
+# =====================================================================
